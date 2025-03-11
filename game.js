@@ -1,497 +1,477 @@
-// Game canvas setup
+// 获取画布和上下文
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 
-// Set canvas size with responsive design
-function resizeCanvas() {
+// 设置画布尺寸
+function setCanvasSize() {
+    const gameArea = document.getElementById('game-area');
+    canvas.style.width = '800px';
+    canvas.style.height = '600px';
     canvas.width = 800;
     canvas.height = 600;
 }
 
-// Initialize canvas size
-resizeCanvas();
-window.addEventListener('resize', resizeCanvas);
+// 游戏常量
+const GRAVITY = 0.4;          
+const PLAYER_SPEED = 6;       
+const JUMP_FORCE = -10;       
+const TOTAL_LEVELS = 3;       
+const PLATFORM_SPACING = 70;   // 平台之间的垂直间距
+const SCREEN_THRESHOLD = 300;  // 玩家达到这个高度时触发平台移动
 
-// Game constants
-const GRAVITY = 0.5;
-const FRICTION = 0.8;
-const PLATFORM_HEIGHT = 20;
-const PLATFORM_WIDTH = 100;
-const NOTE_SIZE = 30;
-const noteLetters = 'CDEFGAB';
+// 加载音效
+const jumpSound = new Audio('assets/jump.mp3');
+const collectSound = new Audio('assets/collect.mp3');
 
-// Game state
-const gameState = {
-    level: 1,
-    score: 0,
-    isPaused: false,
-    isGameOver: false,
-    cameraOffset: 0,
+// 游戏状态
+const game = {
     isRunning: false,
+    score: 0,
+    currentLevel: 1,
     platforms: [],
     notes: [],
-    playerMoved: false,
+    totalNotes: 0,
+    collectedNotes: 0,
+    camera: {
+        y: 0,
+        targetY: 0
+    },
+    platformFallOffset: 0,     // 平台下落偏移量
     player: {
-        x: 400,
-        y: 500,
+        x: 380,
+        y: 530,
         width: 40,
         height: 40,
         velocityX: 0,
         velocityY: 0,
-        speed: 5,
-        jumpForce: -12,
-        isJumping: false,
-        hasMoved: false
+        isJumping: false
     }
 };
 
-// Player properties
-const player = {
-    x: 50,
-    y: 0,
-    width: 30,
-    height: 30,
-    velocityX: 0,
-    velocityY: 0,
-    speed: 4,
-    jumpForce: -10,
-    isJumping: false
-};
-
-// Game elements
-let platforms = [];
-let notes = [];
-
-// Audio system
-let audioContext;
-let jumpSound;
-let collectSound;
-let levelCompleteSound;
-let backgroundMusic;
-
-// Piano note frequencies for different octaves
-const noteFrequencies = {
-    'C': [261.63, 523.25, 1046.50],
-    'D': [293.66, 587.33, 1174.66],
-    'E': [329.63, 659.25, 1318.51],
-    'F': [349.23, 698.46, 1396.91],
-    'G': [392.00, 783.99, 1567.98],
-    'A': [440.00, 880.00, 1760.00],
-    'B': [493.88, 987.77, 1975.53]
-};
-
-// Initialize audio system
-async function initAudio() {
-    try {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        await audioContext.resume();
-        
-        // Load sound effects
-        const [jumpData, collectData] = await Promise.all([
-            fetch('assets/jump.mp3').then(r => r.arrayBuffer()),
-            fetch('assets/collect.mp3').then(r => r.arrayBuffer())
-        ]);
-        
-        [jumpSound, collectSound] = await Promise.all([
-            audioContext.decodeAudioData(jumpData),
-            audioContext.decodeAudioData(collectData)
-        ]);
-        
-        // Create level complete sound
-        levelCompleteSound = createLevelCompleteSound();
-    } catch (error) {
-        console.error('Error loading audio:', error);
+// 生成随机平台宽度
+function getRandomPlatformWidth(isImportant) {
+    if (isImportant) {
+        return Math.random() * 60 + 140; // 重要平台 140-200
     }
+    return Math.random() * 40 + 100; // 普通平台 100-140
 }
 
-// Create level complete sound effect
-function createLevelCompleteSound() {
-    const duration = 1;
-    const buffer = audioContext.createBuffer(1, audioContext.sampleRate * duration, audioContext.sampleRate);
-    const data = buffer.getChannelData(0);
+// 初始化游戏
+function initGame() {
+    // 设置画布尺寸
+    setCanvasSize();
     
-    for (let i = 0; i < buffer.length; i++) {
-        const t = i / audioContext.sampleRate;
-        data[i] = Math.sin(2 * Math.PI * 440 * t) * Math.exp(-3 * t);
-    }
+    // 重置相机
+    game.camera.y = 0;
+    game.camera.targetY = 0;
     
-    return buffer;
-}
-
-// Create background music from collected notes
-function createBackgroundMusic() {
-    if (!audioContext) return;
+    // 重置玩家状态
+    game.player.x = 380;
+    game.player.y = 530;
+    game.player.velocityX = 0;
+    game.player.velocityY = 0;
+    game.player.isJumping = false;
     
-    const noteDuration = 0.5;
-    const collectedNotes = notes.filter(note => note.collected).map(note => note.letter);
+    // 重置音符计数
+    game.collectedNotes = 0;
+    game.totalNotes = 0;
     
-    if (collectedNotes.length === 0) return;
+    // 创建地面平台
+    game.platforms = [{
+        x: 0,
+        y: 580,
+        width: 800,
+        height: 20,
+        isMoving: false
+    }];
     
-    backgroundMusic = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    backgroundMusic.connect(gainNode);
-    gainNode.connect(audioContext.destination);
+    // 创建其他平台
+    let lastX = 200;
+    let lastY = 500;
     
-    let time = audioContext.currentTime;
-    collectedNotes.forEach((note, index) => {
-        const octave = Math.min(Math.floor(gameState.level / 4), 2);
-        const frequency = noteFrequencies[note][octave];
+    // 根据关卡增加平台数量和调整间距
+    const platformCount = 6 + game.currentLevel * 2;
+    let platforms = [];
+    let lastWasMoving = false;
+    
+    for (let i = 0; i < platformCount; i++) {
+        // 每三个平台中的第一个设为重要平台（更长）
+        const isImportant = i % 3 === 0;
+        const width = getRandomPlatformWidth(isImportant);
         
-        backgroundMusic.frequency.setValueAtTime(frequency, time);
-        gainNode.gain.setValueAtTime(0.1, time);
-        gainNode.gain.linearRampToValueAtTime(0, time + noteDuration);
-        
-        time += noteDuration;
-    });
-    
-    backgroundMusic.start();
-    backgroundMusic.stop(time);
-}
+        // 调整平台水平位置，确保可以跳跃到达
+        if (i > 0) {
+            const minJumpDistance = 100;
+            const maxJumpDistance = 180;
+            const jumpDistance = Math.random() * (maxJumpDistance - minJumpDistance) + minJumpDistance;
+            const newX = (lastX + jumpDistance) % (canvas.width - width);
+            lastX = Math.max(100, Math.min(canvas.width - width - 100, newX));
+        }
 
-// Generate level
-function generateLevel() {
-    platforms = [];
-    notes = [];
-    gameState.cameraOffset = 0;
-    
-    const numPlatforms = 5 + gameState.level * 2;
-    let lastX = 50;
-    let lastY = canvas.height - 100;
-    
-    // Reset player position
-    player.x = 50;
-    player.y = lastY - player.height;
-    player.velocityX = 0;
-    player.velocityY = 0;
-    player.isJumping = false;
-    
-    // Calculate max jump height
-    const maxJumpHeight = Math.abs((player.jumpForce * player.jumpForce) / (2 * GRAVITY));
-    
-    for (let i = 0; i < numPlatforms; i++) {
         const platform = {
-            x: lastX + Math.random() * 100 + 50,
-            y: lastY - (Math.random() * (maxJumpHeight * 0.7) + 20),
-            width: PLATFORM_WIDTH - (Math.random() * 20),
-            height: PLATFORM_HEIGHT,
-            isMoving: i > 0 && i % 3 === 0,
-            moveRange: 100,
-            initialX: 0
+            x: lastX,
+            y: lastY - (i * 70),
+            width: width,
+            height: 20,
+            isMoving: false,
+            moveSpeed: 1.5,
+            moveRange: 80,
+            initialX: lastX
         };
         
-        platform.initialX = platform.x;
         platforms.push(platform);
         
-        if (Math.random() > 0.3) {
-            notes.push({
+        // 移动平台生成逻辑
+        if (i > 0 && i < platformCount - 1 && !lastWasMoving) {
+            const gapWidth = 160; // 固定的间隙宽度
+            const movingPlatformX = lastX + width + gapWidth;
+            
+            // 只在平台间有足够空间时添加移动平台
+            if (movingPlatformX + 140 < canvas.width - 100 && Math.random() < 0.3) {
+                const movingPlatform = {
+                    x: movingPlatformX,
+                    y: platform.y - 30,
+                    width: 80,
+                    height: 20,
+                    isMoving: true,
+                    moveSpeed: 1.5,
+                    moveRange: 60,
+                    initialX: movingPlatformX
+                };
+                
+                platforms.push(movingPlatform);
+                lastWasMoving = true;
+            }
+        } else {
+            lastWasMoving = false;
+        }
+    }
+    
+    // 添加到游戏平台数组（包括地面平台）
+    game.platforms = [
+        {
+            x: 0,
+            y: 580,
+            width: 800,
+            height: 20,
+            isMoving: false
+        },
+        ...platforms
+    ];
+    
+    // 创建音符（只在固定平台上生成）
+    game.notes = [];
+    game.platforms.forEach((platform, index) => {
+        if (index > 0 && !platform.isMoving && index % 2 === 0) {
+            game.notes.push({
                 x: platform.x + platform.width / 2,
                 y: platform.y - 40,
                 collected: false,
-                letter: noteLetters[Math.floor(Math.random() * noteLetters.length)]
+                rotation: 0
             });
+            game.totalNotes++;
         }
+    });
+    
+    // 更新UI显示
+    updateUI();
+    
+    // 开始游戏循环
+    if (!game.isRunning) {
+        game.isRunning = true;
+        gameLoop();
+    }
+}
+
+// 更新UI显示
+function updateUI() {
+    document.getElementById('score').textContent = game.score;
+    document.getElementById('noteCount').textContent = `${game.collectedNotes}/${game.totalNotes}`;
+    document.getElementById('level').textContent = `${game.currentLevel}/${TOTAL_LEVELS}`;
+}
+
+// 更新游戏状态
+function updateGame() {
+    if (!game.isRunning) return;
+    
+    // 更新玩家位置
+    game.player.velocityY += GRAVITY;
+    game.player.x += game.player.velocityX;
+    game.player.y += game.player.velocityY;
+
+    // 检查玩家是否达到触发高度
+    if (game.player.y < SCREEN_THRESHOLD) {
+        // 计算需要移动的距离
+        const moveDistance = SCREEN_THRESHOLD - game.player.y;
         
-        lastX = platform.x;
-        lastY = platform.y;
-    }
-}
-
-// Update camera position
-function updateCamera() {
-    const targetY = Math.max(0, player.y - canvas.height / 2);
-    gameState.cameraOffset += (targetY - gameState.cameraOffset) * 0.1;
-}
-
-// Draw game elements
-function draw() {
-    ctx.save();
-    ctx.translate(0, -gameState.cameraOffset);
-    
-    // Clear canvas
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, gameState.cameraOffset, canvas.width, canvas.height);
-    
-    // Draw platforms
-    platforms.forEach(platform => {
-        const gradient = ctx.createLinearGradient(platform.x, platform.y, platform.x, platform.y + platform.height);
-        gradient.addColorStop(0, '#4CAF50');
-        gradient.addColorStop(1, '#357abd');
-        ctx.fillStyle = gradient;
-        ctx.fillRect(platform.x, platform.y, platform.width, platform.height);
-    });
-    
-    // Draw notes
-    notes.forEach(note => {
-        if (!note.collected) {
-            // Draw note sphere
-            const gradient = ctx.createRadialGradient(
-                note.x, note.y, 0,
-                note.x, note.y, NOTE_SIZE/2
-            );
-            gradient.addColorStop(0, '#ffd700');
-            gradient.addColorStop(1, '#ffa500');
+        // 移动玩家回到阈值位置
+        game.player.y = SCREEN_THRESHOLD;
+        
+        // 移动所有平台和音符向下
+        game.platforms.forEach(platform => {
+            platform.y += moveDistance;
             
-            ctx.beginPath();
-            ctx.arc(note.x, note.y, NOTE_SIZE/2, 0, Math.PI * 2);
-            ctx.fillStyle = gradient;
-            ctx.fill();
+            // 如果平台移出屏幕底部，将其移动到顶部
+            if (platform.y > canvas.height + 50) {
+                // 找到最高的平台
+                const highestY = Math.min(...game.platforms.map(p => p.y));
+                platform.y = highestY - PLATFORM_SPACING;
+                
+                // 重新随机生成平台的水平位置
+                const width = getRandomPlatformWidth(true);
+                platform.width = width;
+                platform.x = Math.random() * (canvas.width - width);
+                
+                // 如果是移动平台，重置其初始位置
+                if (platform.isMoving) {
+                    platform.initialX = platform.x;
+                }
+            }
+        });
+        
+        // 移动音符
+        game.notes.forEach(note => {
+            note.y += moveDistance;
             
-            // Draw note letter
-            ctx.fillStyle = '#000';
-            ctx.font = 'bold 16px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(note.letter, note.x, note.y);
-        }
-    });
-    
-    // Draw player
-    const playerGradient = ctx.createLinearGradient(player.x, player.y, player.x, player.y + player.height);
-    playerGradient.addColorStop(0, '#4a90e2');
-    playerGradient.addColorStop(1, '#357abd');
-    ctx.fillStyle = playerGradient;
-    ctx.fillRect(player.x, player.y, player.width, player.height);
-    
-    ctx.restore();
-}
-
-// Update player position and handle collisions
-function updatePlayer() {
-    if (gameState.isPaused) return;
-    
-    if (gameState.playerMoved) {
-        // Apply gravity and update position
-        gameState.player.velocityY += GRAVITY;
-        gameState.player.y += gameState.player.velocityY;
+            // 如果音符移出屏幕底部，将其移动到对应平台的上方
+            if (note.y > canvas.height + 50) {
+                // 找到对应的平台
+                const platform = game.platforms.find(p => 
+                    Math.abs(note.x - (p.x + p.width/2)) < 10 &&
+                    !p.isMoving
+                );
+                
+                if (platform) {
+                    note.y = platform.y - 40;
+                    note.collected = false;
+                }
+            }
+        });
     }
     
-    // Update moving platforms
-    platforms.forEach(platform => {
+    // 更新移动平台位置
+    game.platforms.forEach(platform => {
         if (platform.isMoving) {
             platform.x = platform.initialX + Math.sin(Date.now() / 1000) * platform.moveRange;
         }
     });
     
-    // Update horizontal position
-    gameState.player.x += gameState.player.velocityX;
-    
-    // Apply friction
-    gameState.player.velocityX *= FRICTION;
-    
-    // Platform collision
-    platforms.forEach(platform => {
-        if (gameState.player.y + gameState.player.height > platform.y &&
-            gameState.player.y < platform.y + platform.height &&
-            gameState.player.x + gameState.player.width > platform.x &&
-            gameState.player.x < platform.x + platform.width) {
+    // 检测平台碰撞
+    let onPlatform = false;
+    game.platforms.forEach(platform => {
+        const platformY = platform.y + game.platformFallOffset; // 应用下落偏移
+        
+        if (game.player.y + game.player.height > platformY &&
+            game.player.y < platformY + platform.height &&
+            game.player.x + game.player.width > platform.x &&
+            game.player.x < platform.x + platform.width) {
             
-            if (gameState.player.velocityY > 0) {
-                gameState.player.isJumping = false;
-                gameState.player.velocityY = 0;
-                gameState.player.y = platform.y - gameState.player.height;
+            if (game.player.velocityY > 0) {
+                game.player.isJumping = false;
+                game.player.velocityY = 0;
+                game.player.y = platformY - game.player.height;
+                onPlatform = true;
+                
+                if (platform.isMoving) {
+                    const platformDeltaX = Math.cos(Date.now() / 1000) * platform.moveSpeed;
+                    game.player.x += platformDeltaX;
+                }
             }
         }
     });
     
-    // Note collection
-    notes.forEach(note => {
+    if (!onPlatform) {
+        game.player.isJumping = true;
+    }
+    
+    // 检测音符收集
+    game.notes.forEach(note => {
         if (!note.collected &&
-            gameState.player.x < note.x + NOTE_SIZE &&
-            gameState.player.x + gameState.player.width > note.x &&
-            gameState.player.y < note.y + NOTE_SIZE &&
-            gameState.player.y + gameState.player.height > note.y) {
+            game.player.x < note.x + 25 &&        // 增大碰撞检测范围
+            game.player.x + game.player.width > note.x - 25 &&
+            game.player.y < note.y + 25 &&
+            game.player.y + game.player.height > note.y - 25) {
             
             note.collected = true;
-            gameState.score++;
-            document.getElementById('noteCount').textContent = gameState.score;
+            game.collectedNotes++;
+            game.score += 10;
+            collectSound.currentTime = 0; // 重置音效播放位置
+            collectSound.play();          // 播放收集音效
+            updateUI();
             
-            // Add collection animation
-            const noteElement = document.createElement('div');
-            noteElement.className = 'collected-note';
-            noteElement.style.left = `${note.x}px`;
-            noteElement.style.top = `${note.y - gameState.cameraOffset}px`;
-            document.querySelector('.game-container').appendChild(noteElement);
-            
-            setTimeout(() => noteElement.remove(), 500);
-            playSound(collectSound);
-            
-            if (notes.every(n => n.collected)) {
-                showLevelComplete();
+            // 检查是否收集完所有音符
+            if (game.notes.every(n => n.collected)) {
+                if (game.currentLevel < TOTAL_LEVELS) {
+                    // 进入下一关
+                    game.currentLevel++;
+                    alert('恭喜通过第' + (game.currentLevel-1) + '关！');
+                    initGame();
+                } else {
+                    // 通关游戏
+                    alert('恭喜通关所有关卡！');
+                    game.currentLevel = 1;
+                    initGame();
+                }
             }
         }
     });
     
-    // Boundary checking
-    if (gameState.player.x < 0) gameState.player.x = 0;
-    if (gameState.player.x + gameState.player.width > canvas.width) gameState.player.x = canvas.width - gameState.player.width;
+    // 边界检查
+    if (game.player.x < 0) {
+        game.player.x = 0;
+        game.player.velocityX = 0;
+    }
+    if (game.player.x + game.player.width > canvas.width) {
+        game.player.x = canvas.width - game.player.width;
+        game.player.velocityX = 0;
+    }
     
-    // Check for falling off screen
-    if (gameState.player.y > canvas.height + gameState.cameraOffset) {
-        generateLevel();
+    // 掉落检测
+    if (game.player.y > canvas.height + game.camera.y) {
+        initGame();
     }
 }
 
-// Play sound effect
-function playSound(buffer) {
-    if (!buffer || !audioContext) return;
+// 绘制立体音符
+function drawNote(x, y) {
+    // 外圈光晕
+    const gradient = ctx.createRadialGradient(x, y, 5, x, y, 20);
+    gradient.addColorStop(0, '#FFD700');
+    gradient.addColorStop(1, 'rgba(255, 215, 0, 0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.arc(x, y, 20, 0, Math.PI * 2);
+    ctx.fill();
     
-    const source = audioContext.createBufferSource();
-    source.buffer = buffer;
-    source.connect(audioContext.destination);
-    source.start();
+    // 主体
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.arc(x, y, 15, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // 高光
+    ctx.fillStyle = '#FFF';
+    ctx.beginPath();
+    ctx.arc(x - 5, y - 5, 5, 0, Math.PI * 2);
+    ctx.fill();
 }
 
-// Show level complete screen
-function showLevelComplete() {
-    gameState.isPaused = true;
-    playSound(levelCompleteSound);
-    createBackgroundMusic();
+// 绘制函数
+function draw() {
+    // 清除画布
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    const modal = document.getElementById('levelComplete');
-    modal.classList.remove('hidden');
-    modal.querySelector('.modal-content').style.animation = 'levelComplete 0.5s ease-out forwards';
+    // 保存当前上下文
+    ctx.save();
     
-    // Create celebration particles
-    const container = document.querySelector('.game-container');
-    for (let i = 0; i < 50; i++) {
-        const particle = document.createElement('div');
-        particle.className = 'celebration-particle';
-        particle.style.left = Math.random() * 100 + '%';
-        particle.style.top = Math.random() * 100 + '%';
-        particle.style.animationDelay = Math.random() * 2 + 's';
-        container.appendChild(particle);
+    // 应用相机偏移
+    ctx.translate(0, -game.camera.y);
+    
+    // 绘制背景
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, game.camera.y, canvas.width, canvas.height);
+    
+    // 绘制平台
+    game.platforms.forEach(platform => {
+        // 计算平台实际位置（包含下落偏移）
+        const platformY = platform.y + game.platformFallOffset;
         
-        setTimeout(() => particle.remove(), 3000);
+        // 平台渐变
+        const gradient = ctx.createLinearGradient(
+            platform.x, platformY,
+            platform.x, platformY + platform.height
+        );
+        gradient.addColorStop(0, '#4CAF50');
+        gradient.addColorStop(1, '#388E3C');
+        
+        ctx.fillStyle = gradient;
+        ctx.fillRect(platform.x, platformY, platform.width, platform.height);
+        
+        // 平台顶部高光
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.fillRect(platform.x, platformY, platform.width, 2);
+    });
+    
+    // 绘制音符（也需要应用下落偏移）
+    game.notes.forEach(note => {
+        if (!note.collected) {
+            drawNote(note.x, note.y + game.platformFallOffset);
+        }
+    });
+    
+    // 绘制玩家
+    const playerGradient = ctx.createLinearGradient(
+        game.player.x, game.player.y,
+        game.player.x, game.player.y + game.player.height
+    );
+    playerGradient.addColorStop(0, '#4a90e2');
+    playerGradient.addColorStop(1, '#357abd');
+    
+    ctx.fillStyle = playerGradient;
+    ctx.fillRect(
+        game.player.x,
+        game.player.y,
+        game.player.width,
+        game.player.height
+    );
+    
+    // 恢复上下文
+    ctx.restore();
+}
+
+// 游戏循环
+function gameLoop() {
+    if (game.isRunning) {
+        updateGame();
+        draw();
+        requestAnimationFrame(gameLoop);
     }
 }
 
-// Game loop
-function gameLoop() {
-    if (!gameState.isRunning) return;
-
-    updatePlayer();
-    updateCamera();
-    draw();
-    
-    // Continue game loop
-    requestAnimationFrame(gameLoop);
-}
-
-// Event listeners
+// 键盘控制
 window.addEventListener('keydown', (e) => {
-    if (!gameState.isRunning) return;
+    if (!game.isRunning) return;
     
     switch(e.key) {
         case 'ArrowLeft':
-            gameState.playerMoved = true;
-            gameState.player.velocityX = -gameState.player.speed;
+            game.player.velocityX = -PLAYER_SPEED;
             break;
         case 'ArrowRight':
-            gameState.playerMoved = true;
-            gameState.player.velocityX = gameState.player.speed;
+            game.player.velocityX = PLAYER_SPEED;
             break;
         case 'ArrowUp':
         case ' ':
-            if (!gameState.player.isJumping) {
-                gameState.playerMoved = true;
-                gameState.player.velocityY = gameState.player.jumpForce;
-                gameState.player.isJumping = true;
+            if (!game.player.isJumping) {
+                game.player.velocityY = JUMP_FORCE;
+                game.player.isJumping = true;
+                jumpSound.currentTime = 0; // 重置音效播放位置
+                jumpSound.play();          // 播放跳跃音效
             }
             break;
     }
 });
 
+// 键盘松开事件
 window.addEventListener('keyup', (e) => {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
-        gameState.player.velocityX = 0;
+        game.player.velocityX = 0;
     }
 });
 
-// Mobile controls
-document.getElementById('leftBtn').addEventListener('touchstart', () => {
-    if (gameState.isRunning) {
-        gameState.playerMoved = true;
-        gameState.player.velocityX = -gameState.player.speed;
-    }
-});
-
-document.getElementById('rightBtn').addEventListener('touchstart', () => {
-    if (gameState.isRunning) {
-        gameState.playerMoved = true;
-        gameState.player.velocityX = gameState.player.speed;
-    }
-});
-
-document.getElementById('jumpBtn').addEventListener('touchstart', () => {
-    if (gameState.isRunning && !gameState.player.isJumping) {
-        gameState.playerMoved = true;
-        gameState.player.velocityY = gameState.player.jumpForce;
-        gameState.player.isJumping = true;
-    }
-});
-
-// Mobile control touch end events
-document.getElementById('leftBtn').addEventListener('touchend', () => {
-    if (!gameState.isPaused) gameState.player.velocityX = 0;
-});
-
-// Initialize player position
-function initializePlayer() {
-    gameState.player.x = canvas.width / 2 - gameState.player.width / 2;
-    gameState.player.y = canvas.height - PLATFORM_HEIGHT - gameState.player.height;
-    gameState.player.velocityX = 0;
-    gameState.player.velocityY = 0;
-    gameState.player.isJumping = false;
-    gameState.playerMoved = false;
-}
-
-// Initialize game
-function initGame() {
-    gameState.isRunning = false;
-    gameState.score = 0;
-    gameState.notes = [];
-    initializePlayer();
-    updateScore();
-}
-
-// Update score display
-function updateScore() {
-    document.getElementById('score').textContent = gameState.score;
-    document.getElementById('noteCount').textContent = gameState.score;
-    document.getElementById('level').textContent = gameState.level;
-}
-
-// Draw player
-function drawPlayer() {
-    ctx.fillStyle = '#4CAF50';
-    ctx.fillRect(
-        gameState.player.x,
-        gameState.player.y,
-        gameState.player.width,
-        gameState.player.height
-    );
-}
-
-// Clear canvas
-function clearCanvas() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-// Start game
+// 开始游戏按钮点击事件
 document.getElementById('startButton').addEventListener('click', () => {
-    gameState.isRunning = true;
     document.getElementById('startButton').style.display = 'none';
     document.getElementById('restartButton').style.display = 'block';
     initGame();
     gameLoop();
 });
 
-// Restart game
+// 重新开始按钮点击事件
 document.getElementById('restartButton').addEventListener('click', () => {
     initGame();
-    gameState.isRunning = true;
-    gameLoop();
 });
 
-// Initialize game
-initGame();
+// 页面加载完成后初始化游戏
+window.addEventListener('load', () => {
+    draw(); // 先绘制初始画面
+});
