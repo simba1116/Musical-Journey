@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>音符闯关游戏</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+        }
+
+        .game-container {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            padding: 20px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+        }
+
+        #game-area {
+            position: relative;
+            width: 800px;
+            height: 600px;
+            margin-bottom: 20px;
+        }
+
+        #gameCanvas {
+            background: rgba(0, 0, 0, 0.5);
+            border-radius: 10px;
+        }
+
+        .game-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+        }
+
+        .score {
+            font-size: 24px;
+            font-weight: bold;
+            color: #fff;
+            text-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
+        }
+
+        button {
+            background: linear-gradient(45deg, #4CAF50, #45a049);
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(76, 175, 80, 0.4);
+        }
+
+        .mobile-controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .control-btn {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px 30px;
+            border-radius: 15px;
+            font-size: 20px;
+        }
+
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.hidden {
+            display: none;
+        }
+
+        .modal-content {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            color: #333;
+        }
+
+        @media (max-width: 850px) {
+            #game-area {
+                width: 100%;
+                height: 450px;
+            }
+            
+            .game-container {
+                width: 95%;
+                padding: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <div class="game-header">
+            <div class="level-info">关卡: <span id="level">1</span></div>
+            <div class="score-info">音符: <span id="noteCount">0</span></div>
+        </div>
+        <div id="game-area">
+            <canvas id="gameCanvas"></canvas>
+        </div>
+        <div class="controls">
+            <div class="score">得分: <span id="score">0</span></div>
+            <button id="startButton">开始游戏</button>
+            <button id="restartButton" style="display: none;">重新开始</button>
+        </div>
+        <div class="mobile-controls">
+            <button id="leftBtn" class="control-btn">←</button>
+            <button id="jumpBtn" class="control-btn">跳跃</button>
+            <button id="rightBtn" class="control-btn">→</button>
+        </div>
+    </div>
+    <div id="levelComplete" class="modal hidden">
+        <div class="modal-content">
+            <h2>恭喜过关！</h2>
+            <p>你收集了所有音符！</p>
+            <button id="nextLevelBtn" class="game-btn">下一关</button>
+        </div>
+    </div>
+
+    <script>
+        // 确保在 DOM 完全加载后再加载游戏脚本
+        document.addEventListener('DOMContentLoaded', function() {
+            var script = document.createElement('script');
+            script.src = 'game.js';
+            document.body.appendChild(script);
+        });
+    </script>
+</body>
+</html>
